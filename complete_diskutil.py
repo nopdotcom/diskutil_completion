@@ -35,8 +35,24 @@ import plistlib
 import re
 
 cache = '/tmp/completiondiskcache'
-DEBUG = True
+DEBUG = False
 USE_CACHE = False
+
+
+def iter_all_filesystem_personalities():
+    fsinfo = plistlib.readPlistFromString(sh("diskutil listFilesystems -plist"))
+    for fs in fsinfo:
+        pers = fs.get("Personality")
+        if pers:
+            yield pers
+
+def iter_all_named_volumes():
+    diskinfo = plistlib.readPlistFromString(sh("diskutil list -plist"))
+    for disk in diskinfo['AllDisksAndPartitions']:
+        for part in disk['Partitions']:
+            vn = part.get("VolumeName")
+            if vn:
+                yield vn
 
 def sh(cmd):
     return Popen(cmd,shell=True,stdout=PIPE,stderr=PIPE).communicate()[0]
@@ -54,6 +70,14 @@ def get_disks(curr=''):
         diskinfo = plistlib.readPlistFromString(sh("diskutil list -plist"))
         if USE_CACHE:
             plistlib.writePlist(diskinfo,cache)
+    if curr.startswith("/"):
+        m = diskinfo["AllDisks"]
+        m = ["/dev/"+d for d in m]
+        v = diskinfo["VolumesFromDisks"]
+        v = ["/Volumes/"+d for d in v]
+        return m + v
+    return list(iter_all_named_volumes()) + diskinfo['AllDisks']
+    # return diskinfo['VolumesFromDisks'] + diskinfo['AllDisks']
     named_disk_ct = len(diskinfo['VolumesFromDisks'])
     opts = []
     for i,d in enumerate(diskinfo['WholeDisks']):
@@ -80,19 +104,26 @@ def complete():
     verbs = """
             list
             info
+            activity
+            listFilesystems
             unmount
+            umount
             unmountDisk
             eject
             mount
             mountDisk
-            rename
+            renameVolume
             enableJournal
             disableJournal
+            enableOwnership
+            disableOwnership
             verifyVolume
             repairVolume
             verifyPermissions
             repairPermissions
+            eraseDisk
             eraseVolume
+            reformat
             eraseOptical
             zeroDisk
             randomDisk
@@ -102,22 +133,27 @@ def complete():
             splitPartition
             mergePartition
             """.split()
-    verbs_for_device = """        
+    verbs_for_device = """
             list
             info
             unmount
+            umount
             unmountDisk
             eject
             mount
             mountDisk
-            rename
+            renameVolume
             enableJournal
             disableJournal
+            enableOwnership
+            disableOwnership
             verifyVolume
             repairVolume
             verifyPermissions
             repairPermissions
+            eraseDisk
             eraseVolume
+            reformat
             eraseOptical
             zeroDisk
             randomDisk
@@ -127,10 +163,11 @@ def complete():
             splitPartition
             mergePartition
             """.split()
-    device_final = """        
+    device_final = """
             list
             info
             unmount
+            umount
             unmountDisk
             eject
             mount
@@ -141,40 +178,37 @@ def complete():
             repairVolume
             verifyPermissions
             repairPermissions
+            eraseDisk
             eraseVolume
             eraseOptical
             zeroDisk
             randomDisk
             secureErase
             """.split()
+    filesystem_nicknames = (
+        "free", "fat32",
+        "hfsx", "jhfsx", "jhfs+",
+        "NTFS")
+    partition_types = ( "APM", "MBR", "GPT" )
     verb_options = {
             "list":('-plist', ),
-            "info":('-plist', ),
+            "info":('-plist', '-all', ),
+            "listFilesystems":('-plist', ),
             "unmount":('force', ),
+            "umount":('force', ),
             "unmountDisk":('force', ),
             "eject":( ),
-            "mount":('readOnly', ),
+            "mount":('readOnly', '-mountPoint', ),
             "mountDisk":( ),
-            "rename":('<name>', ),
+            "renameVolume":('<name>', ),
             "enableJournal":( ),
             "disableJournal":('force', ),
             "verifyVolume":( ),
             "repairVolume":( ),
             "verifyPermissions":('-plist', ),
             "repairPermissions":('-plist', ),
-            "eraseVolume":(
-                "Journaled_HFS+",
-                "HFS+",
-                "Case-sensitive_HFS+",
-                "Case-sensitive_Journaled_HFS+",
-                "HFS",
-                "MS-DOS_FAT16",
-                "MS-DOS_FAT32",
-                "MS-DOS_FAT12",
-                "MS-DOS",
-                "UDF",
-                "UFS",
-                "ZFS",'<name>' ),
+            "eraseDisk": ('<name>', ) + partition_types,
+            "eraseVolume": ('<name>', ),
             "eraseOptical":('quick', ),
             "zeroDisk":( ),
             "randomDisk":('<times>', ),
@@ -184,10 +218,10 @@ def complete():
             "splitPartition":( ),
             "mergePartition":( )
             }
-    cwords = os.environ['COMP_WORDS'].split()[1:]
+    cwords = os.environ['COMP_WORDS'].split('\n')[1:]
     cword = int(os.environ['COMP_CWORD'])
     debug(cword)
-    
+
     try:
         curr = cwords[cword-1]
     except IndexError:
@@ -201,19 +235,25 @@ def complete():
         opts = []
         if cwords[0] in verbs_for_device:
             # if verb has device as last param - and dev is last word, exit
-            if cword != len(cwords) and '/dev' in cwords[-1]:
-                sys.exit(0)
-            if not re_in('/dev',cwords) or '/dev' in curr:
-                opts.extend(get_disks(curr))
+            #if cword != len(cwords) and '/dev' in cwords[-1]:
+            #    sys.exit(0)
+            #if not re_in('/dev',cwords) or '/dev' in curr:
+            #    opts.extend(get_disks(curr))
+            opts.extend(get_disks(cwords[-1]))
         opts.extend(verb_options[cwords[0]])
+        if cwords[0] == "eraseDisk" or cwords[0] == "eraseVolume":
+            opts.extend(iter_all_filesystem_personalities())
+            opts.extend(filesystem_nicknames)
         opts = [x for x in opts if x not in cwords[:-2]]
         debug(opts)
         debug (cwords)
-    print ' '.join(filter(lambda x: x.lower().startswith(curr.lower()), opts))
-    debug ("final %s" % ' '.join(filter(lambda x: x.startswith(curr), opts)))
+    sys.stdout.write('\n'.join(filter(lambda x: x.lower().startswith(curr.lower()), opts)))
+    debug ("final |%s|" % ' '.join(filter(lambda x: x.startswith(curr), opts)))
     sys.exit(0)
+
+
 def main():
-    complete()    
+    complete()
 if __name__ == '__main__':
     main()
 

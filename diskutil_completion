@@ -1,33 +1,28 @@
-_diskutilcomplete() 
-{   
-    COMPREPLY=( $( COMP_WORDS="${COMP_WORDS[*]}" \
-                   COMP_CWORD=$COMP_CWORD \
-	               complete_diskutil.py ) )
-    local escaped_single_qoute="'\''"
-    local i=0
-    for entry in ${COMPREPLY[*]}
-    do
-        if [[ "${cur:0:1}" == "'" ]] 
-        then
-                # started with single quote, escaping only other single quotes
-                # [']bla'bla"bla\bla bla --> [']bla'\''bla"bla\bla bla
-                COMPREPLY[$i]="${entry//\'/${escaped_single_qoute}}" 
-        elif [[ "${cur:0:1}" == "\"" ]] 
-        then
-                # started with double quote, escaping all double quotes and all backslashes
-                # ["]bla'bla"bla\bla bla --> ["]bla'bla\"bla\\bla bla
-                entry="${entry//\\/\\\\}" 
-                COMPREPLY[$i]="${entry//\"/\\\"}" 
-        else 
-                # no quotes in front, escaping _everything_
-                # [ ]bla'bla"bla\bla bla --> [ ]bla\'bla\"bla\\bla\ bla
-                entry="${entry//\\/\\\\}" 
-                entry="${entry//\'/\'}" 
-                entry="${entry//\"/\\\"}" 
-                COMPREPLY[$i]="${entry//_/ }"
-        fi
-        (( i++ ))
-    done
+# Courtesy of https://stackoverflow.com/a/40944195
+
+_diskutilcomplete_nl()
+{
+    local IFS=$'\n'
+    echo "${COMP_WORDS[*]}"
 }
+
+
+_diskutilcomplete()
+{
+#    {
+#	local IFS=$'\n '
+#	nl_words="${COMP_WORDS[*]}"
+#    }
+
+    nl_words=$(_diskutilcomplete_nl)
+    cur=${COMP_WORDS[COMP_CWORD]}
+    mapfile -t patterns < <(
+      COMP_WORDS="$nl_words" \
+		COMP_CWORD=$COMP_CWORD \
+		complete_diskutil.py )
+
+  mapfile -t COMPREPLY < <( compgen -W "$( printf '%q ' "${patterns[@]}" )" -- "$cur" | awk '/ / { print "\""$0"\"" } /^[^ ]+$/ { print $0 }' )
+}
+
 complete -F _diskutilcomplete diskutil
 
